@@ -11,16 +11,12 @@ OUTPUT_DIR = ROOT / "data"
 
 # Files to load
 raw_option_path = INPUT_DIR / "rawoptiondata.csv"
-fomc_path = INPUT_DIR / "FOMC.csv"
+fomc_path = INPUT_DIR / "fomc_date.pickle"
 
 
 ### Load the data
 raw_option_data = pd.read_csv(raw_option_path, parse_dates=["date", "exdate", "last_date"])
-fomc_data = pd.read_csv(
-    fomc_path,
-    usecols=["Date", "Release Date", "Type"],
-    parse_dates=["Date", "Release Date"]
-)
+fomc_data = pd.read_pickle(fomc_path)
 
 
 ### Filter the data to keep valid options
@@ -47,8 +43,6 @@ filtered_option_data = (
 
 
 ### Keep options expiring the next two Fridays following an announcement
-fomc_data = fomc_data[fomc_data['Type']=='Statement']               # keep statements only (not minutes...)
-fomc_data[(fomc_data['Date'] >= pd.to_datetime('2012-01-01')) & (fomc_data['Date'] < pd.to_datetime('2025-01-01'))] # keep data between 2012 and 2024
 fomc_data['t0'] = fomc_data['Date'] - pd.offsets.Week(weekday=4)    # get T_0, the Friday on or before the announcement
 
 w = pd.offsets.Week(1)
