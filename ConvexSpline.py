@@ -135,16 +135,11 @@ bs_prices_path = INPUT_DIR / 'blended_volatility_bs_prices.parquet'
 data = pd.read_parquet(bs_prices_path)
 
 ### Convexify the put prices
-import numpy as np
-import pandas as pd
+
 
 def fit_group_convex_spline(g: pd.DataFrame) -> pd.Series:
     # Keep only rows usable for the fit
     gg = g[['strike_price', 'bs_put_price', 'S0']].dropna()
-
-    # If too few points, return NaNs for this group
-    if len(gg) < 6:  # adjust threshold as you like
-        return pd.Series(np.nan, index=g.index, name='bs_put_price_fit')
 
     x = gg['strike_price'].to_numpy(float)
     y = gg['bs_put_price'].to_numpy(float)
@@ -162,6 +157,8 @@ def fit_group_convex_spline(g: pd.DataFrame) -> pd.Series:
 
 
 data['bs_put_price_fit'] = (
-    data.groupby(['date', 'exdate'], group_keys=False)
+    data.groupby(['Date', 'exdate'], group_keys=False)
         .apply(fit_group_convex_spline)
 )
+# Save results
+data.to_parquet(OUTPUT_DIR / "convexified_prices.parquet", index=False)
