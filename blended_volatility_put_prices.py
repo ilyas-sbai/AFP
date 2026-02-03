@@ -76,7 +76,7 @@ data_pivot.loc[mask_right_tail_missing, 'sigma_C'] = lowest_strike_vol[mask_righ
 # Blend volatilities
 data_pivot['sigma_blended'] = (
     data_pivot['w'] * data_pivot['sigma_P'] +
-    (1 - data_pivot['w'] * data_pivot['sigma_C'])
+    (1 - data_pivot['w']) * data_pivot['sigma_C']
 )
 
 # Compute Black-Scholes Put Prices
