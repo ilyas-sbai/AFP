@@ -57,30 +57,45 @@ def computed_implied_event_risk(P1, P2):
     Bhat_real = np.real(Bhat_raw)
 
     # Shift back
-    Bhat = np.roll(Bhat_real, int(N / 2))
+    Bhat_adjusted = np.roll(Bhat_real, int(N / 2))
 
-    # Ensure the convexity of the price output by the FFT
-    Bhat = project_to_convex_matlab(Bhat)
-
-    # Equation 17 (recover probability)
-    term_lag1 = np.roll(Bhat, 1)
-    term_lag2 = np.roll(Bhat, 2)
-
-    qEvent = Bhat - 2 * term_lag1 + term_lag2 # double differencing
-
-    # Enforce boundary assumptions
-    qEvent[0] = 0
-    qEvent[1] = 0
-
-    # Integration to recover prices
-    PEvent_cdf = np.cumsum(qEvent)
-    PEvent = np.cumsum(PEvent_cdf)
-
+    # Recover the raw density from adjusted prices
+    term_lag1 = np.roll(Bhat_adjusted, 1)
+    term_lag2 = np.roll(Bhat_adjusted, 2)
+    qEvent_raw = Bhat_adjusted - 2 * term_lag1 + term_lag2
+    
+    # Add back normalization (that had removed a quadratic term with 2nd derivative 1/(N+1))
+    qEvent_raw = qEvent_raw + (1.0 / (N + 1))
+    
+    # Enforce boundary conditions on density to avoid numerical nosie
+    qEvent_raw[0] = 0
+    qEvent_raw[1] = 0
+    qEvent_raw[-1] = 0
+    qEvent_raw[-2] = 0
+    
+    # Integrate to get the full price
+    PEvent_raw = np.cumsum(np.cumsum(qEvent_raw))
+    
+    # Convexify the full price
+    PEvent_convex = project_to_convex_matlab(PEvent_raw)
+    
+    # Get the final density from the convexified price
+    term_lag1_conv = np.roll(PEvent_convex, 1)
+    term_lag2_conv = np.roll(PEvent_convex, 2)
+    qEvent_final = PEvent_convex - 2 * term_lag1_conv + term_lag2_conv
+    
+    # Boundary cleanup
+    qEvent_final[0] = 0
+    qEvent_final[1] = 0
+    qEvent_final[-1] = 0
+    qEvent_final[-2] = 0
+    
     return {
-        'qEvent': qEvent,
-        'PEvent': PEvent,
-        'Bhat': Bhat
+        'qEvent': qEvent_final,
+        'PEvent': PEvent_convex,
+        'Bhat': Bhat_adjusted # for debugging
     }
+
 
 
 def project_to_convex_matlab(y_np):
@@ -107,63 +122,132 @@ def project_to_convex_matlab(y_np):
     return np.array(fitted_values).flatten()
 
 
-
-
-def plot_event_risk(grid_strikes, results, spot_price=None, date_label=None):
+def plot_event_risk(
+    grid_strikes,
+    results,
+    spot_price=None,
+    k_level=None,
+    date_label=None,
+    show_price=False,
+    price_label="Recovered put price",
+    dist_label="Recovered event risk distribution",
+    x_label=r"$K$ (S&P index level)",
+    y_label="Recovered event risk distribution",
+    title="Recovered event risk distribution",
+    figsize=(9.5, 5.8),
+    style="whitegrid",
+    palette="deep",
+    fill_alpha=0.18,
+    line_width=2.2,
+    spot_kwargs=None,
+    k_kwargs=None,
+):
     """
-    Plots the recovered Event Risk Density against Asset Price.
-    
+    Plot recovered event risk distribution vs strike/index level, with optional overlays.
+
     Args:
-        grid_strikes (np.array): The x-axis values (Asset Prices/Strikes) used for the input P1/P2.
-        results (dict): The output from calculate_implied_event_risk.
-        spot_price (float, optional): Current spot price to mark on the x-axis.
-        date_label (str, optional): Label for the plot title.
+        grid_strikes (np.array): x-axis values (strikes / index levels).
+        results (dict): output containing 'qEvent' and optionally 'PEvent'.
+        spot_price (float, optional): current spot level for a vertical marker.
+        k_level (float, optional): highlight a particular strike/index level K.
+        date_label (str, optional): appended to title.
+        show_price (bool): if True, overlay recovered put price on right axis (requires 'PEvent').
+        price_label (str): legend label for the price curve.
+        dist_label (str): legend label for the distribution curve.
+        x_label (str): x-axis label.
+        y_label (str): left y-axis label.
+        title (str): plot title (date_label appended if provided).
+        figsize (tuple): figure size.
+        style (str): seaborn style.
+        palette (str): seaborn palette.
+        fill_alpha (float): alpha for area fill under density.
+        line_width (float): linewidth for density curve.
+        spot_kwargs (dict, optional): overrides for spot vline styling.
+        k_kwargs (dict, optional): overrides for K vline styling.
+
+    Returns:
+        (fig, ax): matplotlib figure and primary axis.
     """
-    
-    q_event = results['qEvent']
-    p_event = results['PEvent']
-    
-    # Setup aesthetic
-    sns.set_theme(style="whitegrid")
-    fig, ax1 = plt.subplots(figsize=(10, 6))
+    q_event = np.asarray(results["qEvent"])
+    p_event = np.asarray(results["PEvent"]) if ("PEvent" in results and results["PEvent"] is not None) else None
+    x = np.asarray(grid_strikes)
 
-    # --- Plot 1: Risk Neutral Density (Left Axis) ---
-    # This corresponds to the probability mass at each asset price node
-    color = 'tab:blue'
-    ax1.set_xlabel('Asset Price ($S_T$)', fontsize=12)
-    ax1.set_ylabel('Implied Probability Density', color=color, fontsize=12)
-    
-    # Plot the density as a filled area or line
-    ax1.plot(grid_strikes, q_event, color=color, linewidth=2, label='Implied Event Risk Density')
-    ax1.fill_between(grid_strikes, q_event, color=color, alpha=0.1)
-    ax1.tick_params(axis='y', labelcolor=color)
+    if x.shape[0] != q_event.shape[0]:
+        raise ValueError("grid_strikes and results['qEvent'] must have the same length.")
 
-    # Add Spot Price marker if provided
-    if spot_price:
-        ax1.axvline(spot_price, color='black', linestyle='--', alpha=0.7, label=f'Current Spot ({spot_price:.1f})')
+    if show_price and p_event is None:
+        raise ValueError("show_price=True requires results['PEvent'].")
 
-    # --- Plot 2: Implied Put Price (Right Axis - Optional) ---
-    # Useful to see the convexity
-    ax2 = ax1.twinx()  
-    color = 'tab:gray'
-    ax2.set_ylabel('Implied Put Price', color=color, fontsize=12)
-    ax2.plot(grid_strikes, p_event, color=color, linestyle=':', linewidth=2, label='Recovered Put Price')
-    ax2.tick_params(axis='y', labelcolor=color)
+    sns.set_theme(style=style, palette=palette)
+    fig, ax = plt.subplots(figsize=figsize)
 
-    # Title and Layout
-    title = "Implied Event Risk Distribution"
-    if date_label:
-        title += f" ({date_label})"
-    plt.title(title, fontsize=14, pad=15)
-    
-    # Combine legends
-    lines_1, labels_1 = ax1.get_legend_handles_labels()
-    lines_2, labels_2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper right')
+    # Subtle grid, cleaner spines
+    ax.grid(True, which="major", axis="both", linewidth=0.7, alpha=0.35)
+    ax.grid(False, which="minor")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
-    plt.tight_layout()
-    plt.show()
-    return fig, ax1
+    # Main: event risk distribution
+    dist_color = sns.color_palette(palette)[0]
+    ax.plot(x, q_event, color=dist_color, linewidth=line_width, label=dist_label)
+    ax.fill_between(x, q_event, color=dist_color, alpha=fill_alpha, linewidth=0)
+
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+
+    # Optional reference lines (spot and/or chosen K)
+    spot_defaults = dict(color="black", linestyle="--", linewidth=1.4, alpha=0.75)
+    k_defaults = dict(color=sns.color_palette(palette)[2], linestyle="-.", linewidth=1.6, alpha=0.9)
+
+    if spot_kwargs:
+        spot_defaults.update(spot_kwargs)
+    if k_kwargs:
+        k_defaults.update(k_kwargs)
+
+    handles = []
+    labels = []
+
+    h0, l0 = ax.get_legend_handles_labels()
+    handles += h0
+    labels += l0
+
+    if spot_price is not None:
+        ax.axvline(spot_price, **spot_defaults)
+        handles.append(plt.Line2D([0], [0], **spot_defaults))
+        labels.append(f"Spot ({spot_price:,.0f})")
+
+    if k_level is not None:
+        ax.axvline(k_level, **k_defaults)
+        handles.append(plt.Line2D([0], [0], **k_defaults))
+        labels.append(f"$K$ ({k_level:,.0f})")
+
+    # Optional: recovered put price on secondary axis
+    ax2 = None
+    if show_price:
+        ax2 = ax.twinx()
+        price_color = sns.color_palette(palette)[1]
+        ax2.plot(x, p_event, color=price_color, linewidth=1.9, linestyle=":", label=price_label)
+        ax2.set_ylabel("Option price", color=price_color)
+        ax2.tick_params(axis="y", labelcolor=price_color)
+
+        # Keep the secondary axis visually quiet
+        ax2.spines["top"].set_visible(False)
+        ax2.spines["left"].set_visible(False)
+
+        h2, l2 = ax2.get_legend_handles_labels()
+        handles += h2
+        labels += l2
+
+    # Title
+    full_title = title + (f" ({date_label})" if date_label else "")
+    ax.set_title(full_title, pad=12)
+
+    # Legend: compact and consistent
+    if handles:
+        ax.legend(handles, labels, frameon=False, loc="upper right")
+
+    fig.tight_layout()
+    return fig, ax
 
 
 # Helper function to reduce the number of strikes
