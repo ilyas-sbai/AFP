@@ -51,5 +51,7 @@ fomc_data['t2'] = fomc_data['t0'] + 2*w     # second Friday following the announ
 
 merged_data = pd.merge(fomc_data, raw_option_data, left_on='t0', right_on='date', how='left') # align t0 with the trading days of options and drop options trading on other days
 merged_data = merged_data[(merged_data['exdate']==merged_data['t1']) | (merged_data['exdate']==merged_data['t2'])] # keep only data for options expiring at T_1 or T_2
+merged_data = merged_data.rename(columns={"Date": "FOMC_Date"})
+merged_data = merged_data.drop(columns="date")
 
 merged_data.to_parquet(OUTPUT_DIR / "filtered_options.parquet", index=False)
