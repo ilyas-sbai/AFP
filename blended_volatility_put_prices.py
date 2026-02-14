@@ -26,15 +26,15 @@ rf = pd.read_csv(risk_free_path, parse_dates=['date'])
 
 ### Blend implied volatilities
 # Add S&P level and risk free rate data to the option data
-data = pd.merge(option_data, sp500, left_on='Date', right_on='caldt', how='left') # add the index level
+data = pd.merge(option_data, sp500, left_on='t0', right_on='caldt', how='left') # add the index level
 data = data.rename(columns={'spindx':'S0'})
-data = pd.merge(data, rf, left_on='Date', right_on='date', how='left')  # add risk free data
+data = pd.merge(data, rf, left_on='t0', right_on='date', how='left')  # add risk free data
 
-data['T'] = (data['exdate'] - data['Date']).dt.days / 365.25 # time to maturity
+data['T'] = (data['exdate'] - data['t0']).dt.days / 365.25 # time to maturity
 
 # Pivot the data to have the implied volatility data for calls and puts for a given date/exdate/strike on the same row
 data_pivot = data.pivot_table(
-    index=['Date', 'exdate', 'S0', 'strike_price', 'T', 'dtb4wk'], # one row per option date/expiration date/strike price combination
+    index=['FOMC_Date', 't0', 'exdate', 'S0', 'strike_price', 'T', 'dtb4wk'], # one row per option date/expiration date/strike price combination
     columns='cp_flag', # one column for calls, one for put
     values='impl_volatility' # implied volatility for the calls and the put
 ).reset_index() # add back the index columns as regulat columns
